@@ -1,0 +1,26 @@
+#2031   WH-NJ    zone 1
+#2032   WH-GA    zone 1
+#2033   WH-NJ    zone 3                                 | zip came as number 2134, fixed to 02134
+#2034   WH-GA    zone 5
+#2035   WH-GA    zone 4
+#2036   WH-GA    zone 7                                 | WH-NV is down, sent to WH-GA instead
+#2037   PARTNER  outside US (CA)
+#2038   WH-NJ    zone 8                                 | WH-NV is down, sent to WH-NJ instead
+#2039   WH-NJ    zone 1                                 | zip "07030-1834" reduced to 07030
+#2040   WH-GA    zone 5                                 | bundle NW-BNDL-ESS split into its products
+#2041   WH-GA    zone 7                                 | edit added 1x NW-MULTI-30
+#2042   PARTNER  zip prefix 968 not in zones
+#2043   WH-GA    zone 8                                 | WH-NV is down, sent to WH-GA instead
+#2044   WH-GA    zone 6
+#2045   WH-GA    zone 3                                 | sku "nw-mag-90" fixed to NW-MAG-90
+#2046   PARTNER  no valid zip
+#2047   WH-GA    zone 4
+#2048   WH-NJ    zone 5
+#2049   WH-GA    zone 4
+#2050   WH-NJ    zone 5
+#2051   WH-GA    zone 7                                 | WH-NV is down, sent to WH-GA instead
+#2052   WH-GA    zone 8                                 | WH-NV is down, sent to WH-GA instead
+#2053   WH-NJ    zone 2
+#2054   WH-GA    zone 4
+#2055   WH-GA    zone 8
+#2056   PARTNER  no warehouse can ship the whole order  | bundle NW-BNDL-ESS split into its products; WH-NV is down, sent to PARTNER instead
