@@ -1,0 +1,977 @@
+ ▐▛███▛█   Claude Code v2.1.285
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Downloads/order-router 2
+
+
+❯ /plan                                                                         
+  ⎿  Enabled plan mode
+
+❯ Skills test: order routing (about 1 hour)                                     
+  Natura Wellness is a fictional online supplement brand made up for this test  
+  (any real company with a similar name is unrelated) that ships across the US  
+  from several warehouses. Every order has to be routed to one warehouse. We    
+  want it to go to the warehouse closest to the customer that can ship the      
+  whole order in one parcel.                                                    
+  Use any language, tools, or AI you like. Rough is fine; we're judging your    
+  decisions, not polish.                                                        
+  We expect you to use AI, and we'll ask for a link to the conversation. We     
+  want to see how you directed it and checked its work, not just what it        
+  produced.                                                                     
+  Files in this folder                                                          
+  orders.json: today's order events, in the order they arrived                  
+  warehouses.json: our warehouses with their available stock and how many units 
+  of each product they ship per day                                             
+  zones.json: the shipping zone from each warehouse to each ZIP prefix (lower   
+  is closer, cheaper, and faster)                                               
+  catalog.json: products and bundles                                            
+  ops-notes.md: recent messages from the operations team                        
+  Part A: order router (about 40 minutes)                                       
+  Write a script (TypeScript/Node preferred) that routes every order in         
+  orders.json and prints one line per order: the order number, the warehouse    
+  (or PARTNER), and the reason or zone. The routing rules:                      
+  Orders shipping outside the US go to PARTNER, our international partner       
+  warehouse.                                                                    
+  An order with no ZIP, or whose ZIP prefix (first three digits) isn't in       
+  zones.json, goes to PARTNER.                                                  
+  A warehouse can take an order only if it's enabled and has enough available   
+  stock for every item. Orders are never split across warehouses.               
+  Of the warehouses that can take it, pick the lowest zone.                     
+  If there's a tie, pick the warehouse with the most days of cover for the      
+  order. For each product in the order, days of cover is available ÷ daily      
+  velocity; the order's cover at a warehouse is the smallest of those.          
+  If it's still tied, use this priority: WH-NJ, WH-GA, WH-NV, WH-TX.            
+  If no warehouse can take it, it goes to PARTNER.                              
+  Route orders in the order they were created. Each routed order reserves its   
+  stock, so later orders see less. Customers can add items for up to 30 minutes 
+  after ordering (an order_edited event); route each order once, with           
+  everything in it.                                                             
+  For Part A, apply these rules to the files exactly as given; the ops notes    
+  come in at Part B. The data is real-world messy. Put your script and the      
+  output it printed (routes.txt) in a GitHub repo or gist.                      
+  Part B: decisions (about 15 minutes)                                          
+  Use your Part A results and ops-notes.md to prepare answers to these two      
+  questions. You'll discuss your answers and reasoning during your technical    
+  call with Sean, our Development Team Lead.                                    
+  Question 1. Where should each of these orders actually ship from today?       
+  Answer for the router as it runs today, plus anything in the ops notes that   
+  affects where an order can ship. Don't apply your answer to question 4 here;  
+  that's a separate decision.                                                   
+  Orders: #2033, #2037, #2040, #2041, #2045, #2050, #2051                       
+  Choices for each: WH-NJ, WH-GA, WH-NV, WH-TX, Partner warehouse, Hold for a   
+  person to decide                                                              
+  Question 2. Marco asks whether the router should stop sending orders to WH-GA 
+  until Monday. What do you ship?                                               
+  Turn WH-GA off in the router until Monday                                     
+  Keep routing to WH-GA as normal                                               
+  Route away from WH-GA only when another warehouse is within one zone of it    
+  Turn WH-GA off, and turn WH-NV back on to take the extra volume               
+  Submission & next steps                                                       
+  Please complete the assessment within 24 hours of receiving your invitation   
+  email.                                                                        
+  Once you've completed the assessment, book your technical call with Sean.     
+  When booking, you'll be asked to provide:                                     
+  Your GitHub repo or gist link, containing your script and the routes.txt      
+  output.                                                                       
+  Your AI conversation link(s): a share link from ChatGPT, Claude, Gemini, etc. 
+  If you worked in an editor like Cursor or Copilot, export the chat into your  
+  repo and provide the file path. If you didn't use AI, write "none".           
+  During the call, you'll walk Sean through your solution and discuss your      
+  answers to Part B’s Questions 1 and 2. You can also ask questions about the   
+  role and the development team.                                                
+  here is the brief of a routing challenge, can you summarise the routing rules 
+  in your own words and list them in the ordem they sould be applied?           
+
+⏺ The routing rules, in the order to apply them
+
+  Before routing anything
+
+  1. Build each order in full. Fold every order_edited event into its original
+     order, so each order is routed once with all of its items. The brief gives
+     customers a 30-minute window to add items.
+  2. Sort by creation time. Route orders in the order they were created, even if
+     the events arrived in a different order.
+
+  For each order
+
+  3. Non-US destination → PARTNER. This is the first check, because
+     international orders never use the US warehouses.
+  4. No ZIP, or ZIP prefix not in zones.json → PARTNER. The prefix is the first
+     three digits. Without a known zone there's nothing to compare warehouses
+     on.
+  5. Find the warehouses that can take the order. A warehouse qualifies only if:
+     - it's enabled, and
+     - it has enough available stock for every item in the order. Orders are
+       never split.
+  6. No warehouse qualifies → PARTNER.
+  7. Pick the lowest zone among the warehouses that qualify.
+  8. If tied, pick the most days of cover. For each product in the order, days
+     of cover is available stock ÷ daily velocity. The order's cover at a
+     warehouse is the smallest of those numbers, so the order's tightest item
+     decides.
+  9. If still tied, use the fixed priority: WH-NJ, then WH-GA, then WH-NV, then
+     WH-TX.
+  10. Reserve the stock. Subtract the order's quantities from the chosen
+      warehouse so later orders see less. PARTNER orders don't touch US stock.
+
+  Output: one line per order with the order number, the warehouse or PARTNER,
+  and either the zone or the reason it went to PARTNER.
+
+  Questions the brief leaves open
+
+  I haven't opened the data files yet, so these are things to check, not things
+  I've confirmed:
+
+  - Bundles: catalog.json has bundles. They probably need to be broken into
+    their component products before the stock check and the cover calculation.
+  - Late edits: it's unclear what to do with an edit that arrives more than 30
+    minutes after the order. Ignoring it seems the natural reading.
+  - Which stock to use for cover: days of cover should probably use stock before
+    this order's reservation, as the brief literally says. Also check for
+    products with zero or missing velocity, which would mean dividing by zero.
+  - Messy input ("real-world messy"): look out for:
+    - ZIP+4 codes, or ZIPs stored as numbers that have lost their leading zeros
+    - country written different ways ("US", "USA", "United States")
+    - duplicate events, or edits for orders that don't exist
+    - SKUs that differ only in case
+    - cancellations
+  - Ops notes: keep ops-notes.md out of Part A. The brief says to apply the
+    rules to the files exactly as given.
+
+  I can read the data files next and confirm which of these actually come up
+  before planning the script.
+
+✻ Sautéed for 17s · done 14:51
+
+❯ the brief says to route each order once with everything in it, while          
+  customers can edit for up to 30 minutes, what does that mean?                 
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ It means you shouldn't route an order the moment its order_created event shows
+  up. Collect the order's final contents first, then route it once, in the slot
+  given by its original creation time.
+
+  Your data has one real case of this:
+
+  - #2041 is created at 13:30:37 with 1× NW-VITD-60, shipping to NV 89117.
+  - An order_edited event at 13:48:37 (18 minutes later, so inside the 30-minute
+    window) adds 1× NW-MULTI-30.
+  - Orders #2042 to #2046 were created between those two events.
+
+  The correct handling: route #2041 once, before #2042, as an order for VITD-60
+  + MULTI-30. Its queue position comes from the creation time, and its contents
+  come from the final state after edits.
+
+  Wrong ways to handle it:
+
+  1. Route at creation with only VITD-60 and ignore the edit. The added item
+     never gets reserved or shipped.
+  2. Route twice, once at creation and again at the edit. That breaks "route
+     each order once" and can send the order to two warehouses.
+  3. Route at the edit time, after #2046. That moves #2041 later in the queue,
+     so #2042 to #2046 could use up stock that #2041 should have reserved first.
+  4. Treat the added line as a separate shipment. Orders are never split.
+
+  The added item can also change the result. A warehouse that has VITD-60 but
+  not enough MULTI-30 no longer qualifies. Days of cover now includes MULTI-30
+  too, so a tie could break differently.
+
+  How to implement it: we have the whole day's file, so use two passes.
+  1. Group events by order number. Start from each order_created and add the
+     addedLines from any edit whose timestamp is within 30 minutes of creation.
+  2. Sort the merged orders by creation time and route them in that order.
+
+  Edge cases to decide:
+  - Edits after the 30-minute window: ignore them and log a warning.
+  - Edits for an order number that was never created: skip them and log a
+    warning.
+  - The same SKU added again: add it to the existing line's quantity instead of
+    creating a duplicate line.
+
+  While checking this I also saw that #2033's ZIP is stored as the number 2134.
+  Its leading zero has been lost; it should be 02134. Pad numeric ZIPs back to 5
+  digits before taking the 3-digit prefix, otherwise the order wrongly goes to
+  PARTNER.
+
+✻ Sautéed for 23s · done 14:52
+
+❯ please read every file in data/ and list each data quality issue you find,    
+  with the order number it affects, please dont fix anything yet                
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ I read all four files: catalog.json, warehouses.json, zones.json and
+  orders.json (27 events). Nothing has been changed.
+
+  Order data issues
+
+  #: 1
+  Order: #2033
+  Issue: The ZIP is stored as the number 2134 instead of the string "02134", so
+  the leading zero is gone.
+  Effect if not handled: The prefix comes out as 213, which isn't in zones, so a
+
+  Boston order wrongly goes to PARTNER. It should be prefix 021.
+  ────────────────────────────────────────
+  #: 2
+  Order: #2039
+  Issue: The ZIP is in ZIP+4 format: "07030-1834".
+  Effect if not handled: Taking the first 3 characters still gives 070. Checking
+
+  the full value would wrongly reject it.
+  ────────────────────────────────────────
+  #: 3
+  Order: #2046
+  Issue: The ZIP is an empty string "", although the state is NJ.
+  Effect if not handled: The rules say PARTNER. The NJ state shows it's really
+  domestic.
+  ────────────────────────────────────────
+  #: 4
+  Order: #2037
+  Issue: The country is "CA" (Canada) and the zip field holds a postal code,
+  "M5V
+   2T6".
+  Effect if not handled: International, so PARTNER. Check country before ZIP:
+  "M5V" isn't numeric.
+  ────────────────────────────────────────
+  #: 5
+  Order: #2038, #2043, #2055
+  Issue: The state is "CA" (California) and the country is US.
+  Effect if not handled: These aren't errors. The code just needs to read
+  country, not state, so they aren't mistaken for Canada like #2037.
+  ────────────────────────────────────────
+  #: 6
+  Order: #2045
+  Issue: The SKU is lowercase: "nw-mag-90".
+  Effect if not handled: No warehouse inventory key matches it, so it looks out
+  of stock everywhere and goes to PARTNER. It should be matched
+  case-insensitively to NW-MAG-90.
+  ────────────────────────────────────────
+  #: 7
+  Order: #2040, #2056
+  Issue: The SKU is the bundle NW-BNDL-ESS, which appears in no warehouse
+  inventory.
+  Effect if not handled: It must be expanded to VITD-60 ×1 + MAG-90 ×1 using
+  catalog.json. Otherwise it goes to PARTNER.
+  ────────────────────────────────────────
+  #: 8
+  Order: #2041
+  Issue: An order_edited event 18 minutes after creation adds MULTI-30 ×1.
+  Effect if not handled: Merge it into the original order and route in #2041's
+  creation slot (see above).
+  ────────────────────────────────────────
+  #: 9
+  Order: #2042
+  Issue: The ZIP is 96815 (Honolulu), and prefix 968 isn't in zones.json.
+  Effect if not handled: The rules say PARTNER, though it's a domestic US order.
+
+  The data is clean, but this is worth raising.
+
+  Warehouse, zone and catalog issues
+
+  #: 10
+  Where: WH-TX
+  Issue: enabled: false, and every dailyVelocity is 0.
+  Affects: Not used in Part A. If it's ever turned on, days of cover divides by
+  zero (∞), and TX would win every tie by default.
+  ────────────────────────────────────────
+  #: 11
+  Where: WH-NV
+  Issue: MULTI-30 available: 0.
+  Affects: NV can't take any order with MULTI-30, including #2041 after its edit
+
+  (NV zone 2).
+  ────────────────────────────────────────
+  #: 12
+  Where: WH-NJ
+  Issue: MAG-90 available: 2.
+  Affects: #2039 (MAG ×2, NJ zone 1) uses both. #2056 (a bundle, NJ zone 1) then
+
+  can't use NJ. Order of routing matters here.
+  ────────────────────────────────────────
+  #: 13
+  Where: WH-GA
+  Issue: VITD-60 available: 4.
+  Affects: Very low stock for #2050 (VITD ×2, GA zone 1) and any order before it
+
+  that routes VITD to GA.
+  ────────────────────────────────────────
+  #: 14
+  Where: zones.json
+  Issue: There's a top-level "_note" key next to the warehouse keys.
+  Affects: Code that loops over the keys as warehouses would treat _note as one.
+  ────────────────────────────────────────
+  #: 15
+  Where: orders.json
+  Issue: The #2041 edit and the creation of #2047 have the same timestamp
+  (13:48:37).
+  Affects: Harmless if you sort by creation time and merge edits separately. It
+  would matter if events were handled in arrival order with a tie-break.
+
+  Rows 11–13 aren't bad data; the numbers are valid. They're tight stock that
+  will decide several outcomes, so the reservation logic needs to be right.
+
+  Checked and fine
+
+  - Events are in time order.
+  - Order numbers are unique, and every edit refers to an order that exists.
+  - All quantities are positive whole numbers.
+  - Each state matches its ZIP prefix.
+  - Apart from #2042, every US ZIP prefix appears in zones.json for all four
+    warehouses.
+
+  Missing
+
+  ops-notes.md isn't in data/ or the project root. You'll need it for Part B.
+  The project root also already has src/, routes.txt, routes-nv-down.txt and
+  questions-for-claude.md from earlier work, which I haven't opened.
+
+✻ Churned for 30s · done 14:53
+
+❯ each of those issues, what are the options, and which one would you           
+  recommend? I want to choose the approach myself                               
+
+⏺ Here are the options for each issue, with my recommendation first. One
+  principle runs through them. The brief says to apply the rules exactly as
+  given, so I'd normalise the format of the data (padding, letter case, bundles)
+  but never invent data the files don't contain (a guessed ZIP, a new zone).
+  Wherever data gets normalised, the program should log it, so you can show your
+  reasoning on the call.
+
+  1. #2033: numeric ZIP 2134
+
+  - A (recommended): Turn it into a string, pad it to 5 digits (02134) and log
+    that. The state (MA) matches prefix 021, which supports the fix.
+  - B: Treat it as an invalid ZIP and send it to PARTNER.
+  - C: Pad it only when the padded prefix matches the state. That's safer, but
+    it means building a state-to-prefix table that isn't in the data.
+
+  2. #2039: ZIP+4 07030-1834
+
+  - A (recommended): Check the format against ^\d{5}(-\d{4})?$ after padding,
+    then take the first 3 digits. Anything else counts as an invalid ZIP and
+    goes to PARTNER.
+  - B: Just take the first 3 characters. That works here, but it would also
+    accept junk like "M5V".
+
+  3. #2046: empty ZIP
+
+  - A (recommended): Send it to PARTNER with the reason "missing ZIP", as the
+    rules say. Raise on the call that it's really a domestic order.
+  - B: Guess a prefix from the state (NJ). I'd advise against this: NJ covers
+    several prefixes, and it breaks "as given".
+
+  4. #2037: Canada (and the California "CA" state code in #2038/#2043/#2055)
+
+  - A (recommended): Check country first, trimmed and case-insensitive. Treat
+    US/USA as domestic and anything else as PARTNER. Never look at state for
+    this.
+  - B: Accept only the exact string "US". That works on today's file but breaks
+    on the first "us" or "USA".
+
+  5. #2045: lowercase SKU nw-mag-90
+
+  - A (recommended): Trim and uppercase every SKU before using it, and log when
+    that changes something.
+  - B: Treat it as an unknown SKU and send it to PARTNER. That's strict, but
+    it's a formatting slip, not a different product.
+  - For either option: a SKU that is still unknown after normalising goes to
+    PARTNER with the reason "unknown SKU". The program shouldn't crash or
+    quietly drop the line.
+
+  6. #2040, #2056: bundle NW-BNDL-ESS
+
+  - A (recommended): When building each order, expand the bundle into its
+    catalog components, then add up quantities per SKU. A bundle plus a separate
+    VITD becomes VITD ×2.
+  - B: Treat the bundle as its own SKU. It's in no warehouse's inventory, so it
+    would always go to PARTNER, which is clearly wrong.
+
+  7. #2041: edit adds an item
+
+  - A (recommended): Merge edits made within 30 minutes of creation into the
+    order, and route it in its creation-time slot. Ignore later edits, log a
+    warning, and route the order without them.
+  - B: Route it at the time of its last edit. That changes its place in the
+    queue.
+  - C: Ignore edits. The added item never gets reserved.
+  - Choice within A: should a late edit be ignored (recommended), or included
+    anyway?
+
+  8. #2042: Hawaii ZIP prefix 968 missing from zones
+
+  - A (recommended): Send it to PARTNER with the reason "ZIP prefix 968 not in
+    zones", as the rules say. Raise the gap on the call.
+  - B: Add 968 to the zones. That's inventing data and breaks "as given".
+
+  9. WH-TX: dailyVelocity of 0
+
+  - A (recommended): Handle it explicitly. With velocity 0 and stock on hand,
+    cover counts as infinite (nothing sells, so the stock lasts forever). Note
+    this in the code. TX is disabled, so Part A output doesn't change, but it
+    matters if TX is turned on in Part B.
+  - B: Treat velocity 0 as "no data" and skip the cover tie-break for that
+    warehouse. That's arguably more realistic: zero velocity at a disabled site
+    probably means no history, not endless stock.
+  - C: Do nothing. Dividing by zero gives Infinity in JS, which happens to
+    behave like A, but by accident.
+
+  10. Tight stock: NJ MAG = 2, GA VITD = 4, NV MULTI = 0
+
+  The data isn't wrong, so there's nothing to choose here. The script just has
+  to:
+  - reserve stock after each routing
+  - work out days of cover from stock before the current order's reservation
+  - route strictly in creation order.
+
+  11. zones.json _note key
+
+  - A (recommended): Get the list of warehouses from warehouses.json, and look
+    up zones by warehouse code.
+  - B: Loop over the zone keys and skip any that start with _.
+
+  12. Same timestamp for the #2041 edit and #2047's creation
+
+  - A (recommended): Merge edits in a separate first pass, then sort orders by
+    creation time, keeping file order for any ties. The shared timestamp then
+    doesn't matter.
+
+  Applies to everything: where the notes go
+
+  - A (recommended): Keep routes.txt to one clean line per order (order,
+    warehouse, zone or reason). Print normalisation notes and warnings to
+    stderr, or to a separate warnings.txt.
+  - B: Put the notes in the reason column, e.g. WH-NJ zone 3 (zip padded).
+    That's more visible but makes the output messier.
+
+  Tell me which option you want for each issue, for example "all recommended
+  except 9B". I'll put those choices into the plan.
+
+✻ Worked for 39s · done 14:54
+
+❯ so i have to sanitize it for a standard right                                 
+
+⏺ Yes. Bring all the data into one standard shape as soon as it's loaded, then
+  run the routing rules only on that clean shape. The rules should never have to
+  think about lowercase SKUs or numeric ZIPs.
+
+  The standard shape for each order:
+
+  ┌───────────┬────────────────────────┬────────────────────────────────────┐
+  │   Field   │        Standard        │           Gets you there           │
+  ├───────────┼────────────────────────┼────────────────────────────────────┤
+  │ country   │ Uppercase 2-letter     │ Trim and uppercase; map USA to US  │
+  │           │ code (US, CA)          │                                    │
+  ├───────────┼────────────────────────┼────────────────────────────────────┤
+  │           │                        │ Convert to string, keep the part   │
+  │ zip       │ A 5-digit string, or   │ before the dash, pad to 5 digits,  │
+  │           │ null                   │ check it's exactly 5 digits.       │
+  │           │                        │ Anything else becomes null         │
+  ├───────────┼────────────────────────┼────────────────────────────────────┤
+  │ zipPrefix │ 3-digit string, or     │ First 3 digits of the clean ZIP    │
+  │           │ null                   │                                    │
+  ├───────────┼────────────────────────┼────────────────────────────────────┤
+  │           │ Uppercase product SKUs │ Trim and uppercase, expand bundles │
+  │ lines     │  only, one line per    │  into their parts, merge duplicate │
+  │           │ SKU, quantities added  │  SKUs                              │
+  │           │ up                     │                                    │
+  ├───────────┼────────────────────────┼────────────────────────────────────┤
+  │           │ Creation time, with    │ Merge edits first, then sort by    │
+  │ createdAt │ in-window edits        │ creation time                      │
+  │           │ already merged in      │                                    │
+  └───────────┴────────────────────────┴────────────────────────────────────┘
+
+  There are three kinds of action, and the difference matters:
+
+  1. Sanitize: the value is right but badly formatted. Fix it and log it. This
+     covers 2134 → 02134, nw-mag-90 → NW-MAG-90, ZIP+4, and bundles.
+  2. Reject: the value is missing or can't be used. Set it to null and let the
+     rules send the order to PARTNER with a clear reason. This covers the empty
+     ZIP, the Canadian postal code, and unknown SKUs.
+  3. Never invent: don't fill gaps with data the files don't contain. This
+     covers guessing #2046's ZIP from its state and adding 968 to the zones.
+
+  That split is also a good way to explain it on the call. Sanitizing makes the
+  input meet the standard without changing its meaning. Anything that would need
+  a guess goes through the rules unchanged, which is what "apply the rules
+  exactly as given" asks for.
+
+  The warehouse side gets the same treatment: build the warehouse list from
+  warehouses.json so the _note key in zones.json is never read as a warehouse,
+  uppercase the inventory keys, and handle velocity 0 explicitly.
+
+✻ Cooked for 9s · done 14:55
+
+❯ as you can see i implemented the code, can you walk me thorught the code file 
+  by file and explain how an order goes from a raw event to a routed result     
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ I read all six files under src/ and checked routes.txt by hand against the
+  data. Overall the program does five things to each order: build it, clean it,
+  put it in time order, route it, and reserve its stock.
+
+  The pipeline
+
+  orders.json ─┐
+               ├─ index.ts ── buildOrders() ── routeOrders() ── formatResult() 
+  ── routes.txt
+  catalog.json ┘   (load)     (raw → clean Order)  (Order → RouteResult)
+  warehouses.json, zones.json ───────────────────────┘
+
+  1. types.ts: the data shapes
+
+  This file defines the raw input shapes and the clean internal ones:
+  - Raw: OrderCreatedEvent and OrderEditedEvent. The raw zip is typed as string 
+    | number | null, so the messy input is reflected in the types.
+  - Clean: Order (types.ts:47) is the standard shape from earlier: country as a
+    string, zip as a 5-digit string or null, cleaned lines, a createdAt date,
+    and a notes list of everything that was changed.
+  - Output: RouteResult holds the order number, destination, reason and notes.
+
+  2. index.ts: loading and output
+
+  - main() reads the four JSON files, then calls buildOrders and routeOrders.
+  - The --nv-down flag (index.ts:22) turns WH-NV off for a what-if run and
+    writes routes-nv-down.txt. This is your Part B scenario tool.
+  - formatResult prints order  destination  reason, plus | notes when anything
+    was changed.
+
+  3. buildOrders.ts: raw events → clean Order[]
+
+  It makes four passes over the events (buildOrders.ts:6):
+  1. Create (createOrder, line 30). Every order_created event becomes an Order.
+     cleanCountry and cleanZip run here, and a note is added if the ZIP was a
+     number or was shortened.
+  2. Edit (applyEdit, line 53). Each order_edited event is matched to its order
+     by order number:
+     - unknown order → warning, edit skipped
+     - more than 30 minutes after creation (or before it) → note, edit skipped
+     - otherwise → the added lines are appended.
+  3. Prepare lines (prepareLines, line 84). Each line's SKU is uppercased and
+     lines with quantity ≤ 0 are dropped. Bundles are expanded into their
+     components, multiplied by the bundle quantity. addLine merges lines with
+     the same SKU. Because this runs after edits, added lines get cleaned too.
+  4. Sort by createdAt (line 25). JS sort keeps the original order for ties, so
+     equal timestamps stay in file order.
+
+  4. cleanData.ts: the cleaning functions
+
+  - cleanCountry: trims, uppercases, and maps USA / UNITED STATES to US.
+  - cleanZip: returns null for an empty or missing ZIP. Numbers are padded to 5
+    digits. It then takes the first 5 characters and requires them all to be
+    digits.
+  - cleanSku: trims and uppercases.
+  - findBundle and addLine: catalog lookup and merging same-SKU lines.
+
+  5. routeOrders.ts: clean Order → RouteResult
+
+  routeOrders (line 11) deep-copies the warehouses so the input isn't changed,
+  then calls routeOrder once per order, in order. Stock reserved by one order is
+  visible to the next. For each order, routeOrder (line 23) applies the rules
+  in the brief's order:
+
+  Step: 1
+  Code: line 24
+  Rule: country ≠ US → PARTNER
+  ────────────────────────────────────────
+  Step: 2
+  Code: line 28
+  Rule: zip is null → PARTNER
+  ────────────────────────────────────────
+  Step: 3
+  Code: line 34
+  Rule: prefix in no warehouse's zones → PARTNER
+  ────────────────────────────────────────
+  Step: 4
+  Code: findWarehousesThatCanShip (line 95)
+  Rule: keep warehouses that are enabled, not forced off, have stock for every
+  line (hasStockForWholeOrder), and have a zone for the prefix. Days of cover
+  is worked out at this point, before any reservation
+  ────────────────────────────────────────
+  Step: 5
+  Code: line 50
+  Rule: no warehouse left → PARTNER
+  ────────────────────────────────────────
+  Step: 6
+  Code: pickBestOption / isBetterOption (line 171)
+  Rule: lowest zone, then highest days of cover, then the order WH-NJ, WH-GA,
+  WH-NV, WH-TX
+  ────────────────────────────────────────
+  Step: 7
+  Code: reserveStock (line 186)
+  Rule: subtract this order's quantities from the chosen warehouse
+
+  calculateDaysOfCover (line 139) takes the smallest available ÷ velocity across
+  the order's lines. It skips lines with velocity 0, so if every line has
+  velocity 0 the cover is Infinity.
+
+  When warehouses are forced off, lines 42–62 also work out where the order
+  would have gone, and add a note like "WH-NV is down, sent to X instead".
+
+  One order traced end to end: #2041
+
+  1. Raw: order_created at 13:30:37, ZIP "89117", 1× VITD-60. Then an
+     order_edited at 13:48:37 adds 1× MULTI-30.
+  2. createOrder: country US, zip 89117, no notes.
+  3. applyEdit: the edit is 18 minutes after creation, inside the window.
+     MULTI-30 is appended, with the note "edit added 1x NW-MULTI-30".
+  4. prepareLines: the SKUs are already clean and there are no bundles. The
+     result is [VITD-60 ×1, MULTI-30 ×1].
+  5. Sort: #2041 stays in its 13:30 slot, ahead of #2042 to #2046.
+  6. routeOrder: the country is US and prefix 891 is known. Checking the
+     candidates:
+     - WH-NV (zone 2): MULTI-30 available is 0, so it's out.
+     - WH-TX: disabled, so it's out.
+     - WH-NJ (zone 8): qualifies.
+     - WH-GA (zone 7): qualifies.
+  7. Pick: GA, because zone 7 beats zone 8. GA reserves VITD (1 left) and MULTI.
+  8. Output: #2041  WH-GA  zone 7 | edit added 1x NW-MULTI-30
+
+  The edit sends this order from zone 2 to zone 7. Without the added MULTI-30 it
+  would have gone to NV. It's a good example for the call.
+
+  Checking the output by hand
+
+  I worked out these results from the raw data and they all match routes.txt:
+  - #2034 (IL, MAG): NJ and GA are both zone 5. NJ's MAG cover is 2/20 = 0.1
+    days and GA's is 150/15 = 10, so GA wins.
+  - #2040 (NY, bundle): NJ is zone 2, but #2039 already used NJ's 2 MAG, so it
+    goes to GA (zone 5).
+  - #2050 (GA, VITD ×2): GA has only 1 VITD left after #2035, #2040 and #2041,
+    so it goes to NJ (zone 5).
+  - #2055 (CA, MULTI): NV has no MULTI. NJ and GA are both zone 8, and GA has
+    more cover (294/25 vs 119/30), so GA wins.
+  - #2056 (NJ, bundle): NJ has no MAG left, so it goes to GA (zone 5). This used
+    GA's last VITD.
+
+  Things I noticed (none change today's output)
+
+  1. routeOrders.ts:111: zones[warehouse.code][zipPrefix] crashes if a warehouse
+     has no entry in zones.json. isZipPrefixKnown guards against this but this
+     line doesn't.
+  2. Unknown SKUs get a misleading reason. They fail the stock check and show up
+     as "no warehouse can ship the whole order", with no "unknown SKU" note.
+  3. routeOrders.ts:180: a warehouse missing from TIE_BREAK_PRIORITY gets
+     indexOf = -1 and would win the last tie-break.
+  4. cleanZip is loose. A ZIP given as the string "2134" isn't padded. Junk like
+     "12345abc" is accepted as 12345.
+  5. Velocity 0 is skipped, which effectively means infinite cover. That's fine,
+     but say so explicitly. It matters for Part B, because turning TX on would
+     let it win cover ties.
+  6. Quantity check: NaN and fractional quantities get through (NaN <= 0 is
+     false).
+  7. Duplicate order numbers: a repeated order_created would be routed twice.
+  8. routeOrders.ts:24: order. country has a stray space. It's harmless but
+     looks odd in review.
+
+  I can turn any of these into a fix plan.
+
+✻ Worked for 56s · done 14:56
+
+❯ for example if has no country it always go to a partner, zip code and stock   
+  right?                                                                        
+
+⏺ Yes. Every route that fails ends at PARTNER, because PARTNER is the fallback
+  for any order the router can't place.
+
+  ┌─────────────────┬───────────────────────────────────┬──────────────────┐
+  │    Situation    │             Code path             │    Result in     │
+  │                 │                                   │    routes.txt    │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │                 │ cleanCountry(undefined) returns   │ PARTNER  outside │
+  │ No country      │ "", and "" !== "US"               │  US ()           │
+  │                 │ (routeOrders.ts:24)               │                  │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │ Non-US country  │ same check                        │ PARTNER  outside │
+  │                 │                                   │  US (CA)         │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │ No ZIP /        │ cleanZip returns null             │ PARTNER  no      │
+  │ invalid ZIP     │ (routeOrders.ts:28)               │ valid zip        │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │ ZIP prefix not  │ isZipPrefixKnown                  │ PARTNER  zip     │
+  │ in zones        │ (routeOrders.ts:34)               │ prefix 968 not   │
+  │                 │                                   │ in zones         │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │ No warehouse    │                                   │ PARTNER  no      │
+  │ has stock for   │ findWarehousesThatCanShip comes   │ warehouse can    │
+  │ the whole order │ back empty (routeOrders.ts:50)    │ ship the whole   │
+  │                 │                                   │ order            │
+  ├─────────────────┼───────────────────────────────────┼──────────────────┤
+  │ Unknown SKU     │ fails the stock check everywhere, │ same message as  │
+  │                 │  same path as above               │ above            │
+  └─────────────────┴───────────────────────────────────┴──────────────────┘
+
+  Two things to be aware of:
+
+  1. A missing country gets the wrong reason. It says "outside US ()", but we
+     don't actually know where the order ships. The brief only says that orders
+     outside the US go to PARTNER. A blank country with a valid US ZIP is
+     probably domestic. Sending it to PARTNER is still defensible under "as
+     given", since you shouldn't assume it's US. But the reason should say
+     missing country so nobody reads it as international. This doesn't affect
+     today's data, because every order has a country.
+  2. PARTNER mixes very different cases. A real Canadian order and a domestic
+     order with a typo both come out as just "PARTNER". The reason column is the
+     only thing that tells them apart, so it should be specific. Part B gives
+     "Hold for a person to decide" as an option for this reason. Orders like
+     #2046 (empty ZIP, NJ state) and #2042 (Hawaii) go to PARTNER under the
+     rules, but in real operations a person should probably look at them.
+
+  The router's job is to follow the rules, and the reason column carries the
+  explanation. Missing data never makes the router guess a warehouse. It always
+  falls back to PARTNER and says why.
+
+✻ Cogitated for 12s · done 14:58
+
+❯ but if it has no country?                                                     
+
+⏺ With the current code it goes to PARTNER: cleanCountry returns "", which isn't
+  "US", so the result is PARTNER  outside US ().
+
+  None of the brief's rules actually covers this case. "Outside the US goes to
+  PARTNER" assumes we know the country, and a blank country doesn't tell us. So
+  it's your call. You have three options:
+
+  Option: A. PARTNER with reason "missing country" (my recommendation)
+  Behaviour: Unknown country is handled like an unknown ZIP: we can't confirm
+  the
+  order is domestic, so the fallback takes it
+  Downside: A real US order might go to PARTNER
+  ────────────────────────────────────────
+  Option: B. Assume US if the ZIP is a valid 5-digit US ZIP and the prefix is in
+
+  zones
+  Behaviour: Routes it to a US warehouse
+  Downside: That's guessing data the file doesn't contain. A 5-digit code could
+  also be a German or French postcode
+  ────────────────────────────────────────
+  Option: C. Hold for a person
+  Behaviour: Safest in real operations
+  Downside: Part A's output only allows a warehouse or PARTNER, so this belongs
+  in Part B
+
+  My recommendation is A. It matches how the brief treats missing ZIPs (missing
+  data goes to PARTNER) and doesn't invent anything. The only code change is a
+  clearer reason: check for country === "" before the US check and return
+  "missing country" instead of "outside US ()".
+
+  This doesn't change today's output, because all 26 orders have a country. It's
+  still worth having a clear answer if Sean asks.
+
+✻ Worked for 8s · done 14:58
+
+❯ run the tests and show me the output                                          
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All 6 tests pass:
+
+  ✔ zip that lost its leading zero is fixed
+  ✔ second order goes to the other warehouse after stock is reserved
+  ✔ edit inside 30 minutes is routed together with the order
+  ✔ edit after 30 minutes is ignored
+  ✔ bundle is split into products and lowercase sku is fixed
+  ✔ warehouse forced off is skipped
+  ℹ tests 6 · pass 6 · fail 0 · duration ~150ms
+
+  What's covered: ZIP cleaning, stock reservation between orders, the 30-minute
+  edit window (both inside and outside it), bundle expansion with lowercase
+  SKUs, and the --nv-down forced-off option.
+
+  What isn't tested yet:
+
+  ┌───────────────────────┬─────────────────────────────────────────────────┐
+  │      Not covered      │                 Why it matters                  │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Non-US country →      │ It's the first rule in the brief                │
+  │ PARTNER               │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Missing country →     │ The case we just discussed                      │
+  │ PARTNER               │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ ZIP prefix not in     │ The Hawaii case, #2042                          │
+  │ zones → PARTNER       │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ No warehouse has      │ The final fallback                              │
+  │ stock → PARTNER       │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Days-of-cover         │ The rule most likely to be implemented wrong.   │
+  │ tie-break             │ The real data uses it (#2034, #2055), but no    │
+  │                       │ test checks it                                  │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Priority tie-break    │ The final tie-breaker                           │
+  │ (NJ, GA, NV, TX)      │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Disabled warehouse is │ This is what keeps WH-TX out                    │
+  │  skipped              │                                                 │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Velocity 0            │ Avoids divide-by-zero, and decides how TX       │
+  │                       │ behaves if it's turned on                       │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Events out of time    │ The tests always pass events already in order,  │
+  │ order are sorted      │ so the sort is never exercised                  │
+  ├───────────────────────┼─────────────────────────────────────────────────┤
+  │ Full run on the real  │ Comparing against routes.txt would catch any    │
+  │ data                  │ change in the real output                       │
+  └───────────────────────┴─────────────────────────────────────────────────┘
+
+  The three I'd add first are the days-of-cover tie-break, the priority
+  tie-break, and the full run on the real data. Together they cover the
+  rule-ordering logic Sean is most likely to dig into, and they lock in today's
+  output. I can plan those out if you'd like.
+
+✻ Worked for 13s · done 14:59
+
+❯ nevada is down and the current warehouses dont have it on stock, so should i  
+  send to a partner and send a note?                                            
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Under the rules, yes: if no warehouse can ship the whole order, it goes to
+  PARTNER. Your code already does this and adds a note. The order is #2056, and
+  I traced it by hand with WH-NV off to confirm.
+
+  Why #2056 has nowhere to go (NJ customer, bundle = VITD ×1 + MAG ×1)
+
+  WH-GA vitamin D (starts at 4):
+
+  ┌────────────────┬─────────────────────────────────────────────┬──────────┐
+  │     Order      │         Where it goes with NV down          │ GA VITD  │
+  │                │                                             │   left   │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2035 (TX)     │ GA, zone 4                                  │ 3        │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2038 (CA)     │ NJ: NJ and GA are both zone 8, and NJ has   │ 3        │
+  │                │ more cover (~10 vs 0.1 days)                │          │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2040 (NY,     │ GA, zone 5                                  │ 2        │
+  │ bundle)        │                                             │          │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2041 (NV, +   │ GA, zone 7                                  │ 1        │
+  │ MULTI)         │                                             │          │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2050 (GA,     │ NJ: GA has only 1 left                      │ 1        │
+  │ VITD ×2)       │                                             │          │
+  ├────────────────┼─────────────────────────────────────────────┼──────────┤
+  │ #2051 (NV,     │ GA, zone 7: NV is down and NJ is zone 8     │ 0        │
+  │ VITD)          │                                             │          │
+  └────────────────┴─────────────────────────────────────────────┴──────────┘
+
+  At #2056, every warehouse is out:
+  - WH-NJ: MAG = 0, because #2039 took both units.
+  - WH-GA: VITD = 0, because #2051 took the last one.
+  - WH-NV: forced off.
+  - WH-TX: disabled.
+
+  So it goes to PARTNER. In the normal run, #2051 goes to NV, GA keeps one VITD,
+  and #2056 ships from GA. The NV outage takes stock away from a different 
+  order than the ones it reroutes. This is a good point to make on the call.
+
+  Is PARTNER plus a note the right answer?
+
+  For the router: yes. That's the rule, and the note makes the result easy to
+  audit. Two small improvements:
+  - The current note says "WH-NV is down, sent to PARTNER instead". That's true,
+    but it hides the actual cause. Something like no single warehouse has 
+    VITD+MAG (GA VITD used up by #2051) would tell a person what to fix.
+  - Use a separate reason code for "no stock because of an outage", so ops can
+    filter on it.
+
+  For the real-world decision, it's less clear-cut:
+  - The brief calls PARTNER the international partner warehouse. Sending a
+    domestic NJ order there may be slow or expensive. Hold for a person might be
+    better, for example until NJ gets more magnesium or NV comes back.
+  - WH-TX has 500 of everything but is disabled. Whether it could be used
+    depends on the ops notes.
+  - #2056 isn't on the Q1 list, so treat this as a side effect to mention, not
+    an answer you need to give.
+
+✻ Worked for 31s · done 15:01
+
+❯ trace the vitamin D stock at WH-GA across the whole day, with order does it   
+  run out and what doest it affect?                                             
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Stop Task
+  ⎿  cd "/Users/arthurhzkunz/Downloads/order-router 2" && cat > /dev/stdin
+     <<'EOF' | npx tsx --input-type=module -e "$(cat)" 2>&1
+     EOF… · stopped
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I ran the router and tracked WH-GA's vitamin D after every order that contains
+  it. GA starts the day with 4 units, and its daily velocity is 30, so 4 units
+  is about 0.13 days of cover. It's the scarcest stock in the network.
+
+  Part A run (files as given)
+
+  ┌───────┬─────────────────┬───────┬───────────┬──────────────┬──────────┐
+  │ Order │    Customer     │ Needs │ GA before │  Routed to   │ GA after │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2031 │ NJ              │ 1     │ 4         │ WH-NJ zone 1 │ 4        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2033 │ MA              │ 1     │ 4         │ WH-NJ zone 3 │ 4        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2035 │ TX              │ 1     │ 4         │ WH-GA zone 4 │ 3        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2038 │ CA              │ 1     │ 3         │ WH-NV zone 4 │ 3        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2040 │ NY (bundle)     │ 1     │ 3         │ WH-GA zone 5 │ 2        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2041 │ NV (after edit) │ 1     │ 2         │ WH-GA zone 7 │ 1        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2042 │ HI              │ 1     │ 1         │ PARTNER      │ 1        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2048 │ IL              │ 1     │ 1         │ WH-NJ zone 5 │ 1        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2050 │ GA (Atlanta)    │ 2     │ 1         │ WH-NJ zone 5 │ 1        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2051 │ NV              │ 1     │ 1         │ WH-NV zone 2 │ 1        │
+  ├───────┼─────────────────┼───────┼───────────┼──────────────┼──────────┤
+  │ #2056 │ NJ (bundle)     │ 1     │ 1         │ WH-GA zone 5 │ 0        │
+  └───────┴─────────────────┴───────┴───────────┴──────────────┴──────────┘
+
+  GA runs out at #2056, the last order of the day, so nothing goes unfilled. The
+  scarcity still has a cost:
+
+  #2050 is the order hurt most. It's an Atlanta customer, and GA is zone 1 for
+  them. They need 2 units, but only 1 is left, so the order ships from NJ in
+  zone 5 instead of zone 1. The three units that ran GA down all went to
+  customers outside the region:
+  - #2035 (Texas): GA was the closest enabled warehouse, because WH-TX is
+    disabled.
+  - #2040 (New York bundle): NJ is zone 2, but #2039 had already taken NJ's last
+    magnesium.
+  - #2041 (Nevada): NV is zone 2, but the edit added a multivitamin, which NV
+    has none of. Without that edit, #2041 goes to NV, GA keeps 2 units, and 
+    #2050 ships from GA in zone 1. So a customer adding an item in Nevada pushed
+    a customer in Atlanta from zone 1 to zone 5.
+
+  #2048 (Illinois) shows the cover tie-break working. GA and NJ are both zone 5.
+  GA's cover is 1/30 ≈ 0.03 days against NJ's ~9.9, so NJ wins and GA's last
+  unit is protected.
+
+  NV-down run
+
+  The order is the same up to #2050. Then:
+  - #2051 (Nevada) can't use NV, so it goes to GA in zone 7 (NJ is zone 8). GA 
+    runs out here.
+  - #2056 (NJ bundle) has GA with no VITD and NJ with no MAG, so no single
+    warehouse can ship it and it goes to PARTNER.
+
+  Points for the call
+
+  1. The router routes one order at a time and never looks ahead. Each order
+     takes its own best warehouse, even if a later local customer needed that
+     stock more. Under the brief's rules that's correct. But it means GA's tiny
+     VITD stock goes to Texas, New York and Nevada before the Atlanta customer
+     arrives.
+  2. Small events change other orders. One edit (#2041) changes #2050's result,
+     and one outage (NV) changes #2056's. That's why Part B needs a full re-run
+     of the day and not just changes to the listed orders.
+  3. GA's VITD is a real operations problem whatever the routing: 4 units
+     against 30/day. That's relevant context for Marco's WH-GA question, though
+     the actual numbers are in ops-notes.md, which I still can't see.
+
+✻ Churned for 2m 38s · done 15:05
